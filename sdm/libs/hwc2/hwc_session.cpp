@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2018, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2014-2020, The Linux Foundation. All rights reserved.
  * Not a Contribution.
  *
  * Copyright 2015 The Android Open Source Project
@@ -48,7 +48,14 @@
 
 #define __CLASS__ "HWCSession"
 
+#ifdef TARGET_KERNEL_4_14
+#define HWC_UEVENT_SWITCH_HDMI "change@/devices/virtual/graphics/fb2"
+#define CONN_STATE "STATUS="
+#else
 #define HWC_UEVENT_SWITCH_HDMI "change@/devices/virtual/switch/hdmi"
+#define CONN_STATE "SWITCH_STATE="
+#endif
+
 #define HWC_UEVENT_GRAPHICS_FB0 "change@/devices/virtual/graphics/fb0"
 
 static sdm::HWCSession::HWCModuleMethods g_hwc_module_methods;
@@ -194,7 +201,11 @@ int HWCSession::Init() {
     // Create display if it is connected, else wait for hotplug connect event.
     if (hw_disp_info.is_connected) {
       status = CreateExternalDisplay(HWC_DISPLAY_PRIMARY);
+    } else {
+      CreateNullDisplay();
+      null_display_active_ = true;
     }
+    hwc_display_[HWC_DISPLAY_PRIMARY]->SetIsPrimaryPanel(true);
   } else {
     // Create and power on primary display
     status = HWCDisplayPrimary::Create(core_intf_, &buffer_allocator_, &callbacks_, qservice_,
@@ -579,6 +590,7 @@ int32_t HWCSession::RegisterCallback(hwc2_device_t *device, int32_t descriptor,
     }
   }
   hwc_session->need_invalidate_ = false;
+  hwc_session->callback_reg_ = true;
   return INT32(error);
 }
 
@@ -1489,7 +1501,7 @@ android::status_t HWCSession::QdcmCMDHandler(const android::Parcel *input_parcel
 void HWCSession::UEventHandler(const char *uevent_data, int length) {
   if (!strcasecmp(uevent_data, HWC_UEVENT_SWITCH_HDMI)) {
     DLOGI("Uevent HDMI = %s", uevent_data);
-    int connected = GetEventValue(uevent_data, length, "SWITCH_STATE=");
+    int connected = GetEventValue(uevent_data, length, CONN_STATE);
     if (connected >= 0) {
       DLOGI("HDMI = %s", connected ? "connected" : "disconnected");
       if (HotPlugHandler(connected) == -1) {
@@ -1546,6 +1558,14 @@ void HWCSession::ResetPanel() {
 int HWCSession::HotPlugHandler(bool connected) {
   int status = 0;
   bool notify_hotplug = false;
+  if (!first_commit_ && !connected && hdmi_is_primary_ && !null_display_active_) {
+    SCOPE_LOCK(locker_[HWC_DISPLAY_PRIMARY]);
+    DLOGI("Disconnect event before first commit");
+    HWCDisplayExternal::Destroy(hwc_display_[HWC_DISPLAY_PRIMARY]);
+    CreateNullDisplay();
+    null_display_active_ = true;
+    return 0;
+  }
 
   // To prevent sending events to client while a lock is held, acquire scope locks only within
   // below scope so that those get automatically unlocked after the scope ends.
@@ -1556,13 +1576,15 @@ int HWCSession::HotPlugHandler(bool connected) {
     // If HDMI is not primary, create/destroy external display normally.
     if (hdmi_is_primary_) {
       SCOPE_LOCK(locker_[HWC_DISPLAY_PRIMARY]);
-      if (hwc_display_[HWC_DISPLAY_PRIMARY]) {
+      if (!null_display_active_) {
         status = hwc_display_[HWC_DISPLAY_PRIMARY]->SetState(connected);
       } else {
-        status = CreateExternalDisplay(HWC_DISPLAY_PRIMARY);
-        notify_hotplug = true;
+        // This cannot be avoided due to SurfaceFlinger design
+        // limitation in Android P.
+        HWCDisplayExternal::Destroy(hwc_display_[HWC_DISPLAY_PRIMARY]);
+        DLOGE("External display is connected. Exit!!");
+        _exit(1);
       }
-
       break;
     }
 
@@ -1711,12 +1733,13 @@ int HWCSession::CreateExternalDisplay(int disp, uint32_t primary_width,
     }
 }
 
-#ifdef DISPLAY_CONFIG_1_1
-// Methods from ::vendor::hardware::display::config::V1_1::IDisplayConfig follow.
-Return<int32_t> HWCSession::setDisplayAnimating(uint64_t display_id, bool animating ) {
-  return CallDisplayFunction(static_cast<hwc2_device_t *>(this), display_id,
-                             &HWCDisplay::SetDisplayAnimating, animating);
+
+void HWCSession::CreateNullDisplay() {
+  auto hwc_display = &hwc_display_[HWC_DISPLAY_PRIMARY];
+
+  HWCDisplayDummy::Create(core_intf_, &buffer_allocator_, &callbacks_, qservice_,
+                          hwc_display);
 }
-#endif
+
 
 }  // namespace sdm

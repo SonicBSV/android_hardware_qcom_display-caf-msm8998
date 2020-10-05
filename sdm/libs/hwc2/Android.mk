@@ -8,13 +8,19 @@ LOCAL_MODULE                  := hwcomposer.$(TARGET_BOARD_PLATFORM)
 LOCAL_VENDOR_MODULE           := true
 LOCAL_MODULE_RELATIVE_PATH    := hw
 LOCAL_MODULE_TAGS             := optional
-LOCAL_C_INCLUDES              := $(common_includes)
+LOCAL_C_INCLUDES              := $(common_includes) \
+                                 $(kernel_includes)
 LOCAL_HEADER_LIBRARIES        := display_headers
 
 LOCAL_CFLAGS                  := -Wno-missing-field-initializers -Wno-unused-parameter \
                                  -std=c++11 -fcolor-diagnostics\
                                  -DLOG_TAG=\"SDM\" $(common_flags) \
                                  -I $(display_top)/sdm/libs/hwc
+
+ifeq ($(TARGET_KERNEL_VERSION), 4.14)
+LOCAL_CFLAGS += -DTARGET_KERNEL_4_14
+endif
+
 ifeq ($(TARGET_EXCLUDES_DISPLAY_PP), true)
 LOCAL_CFLAGS += -DEXCLUDE_DISPLAY_PP
 endif
@@ -36,12 +42,33 @@ ifeq ($(display_config_version), DISPLAY_CONFIG_1_1)
 LOCAL_SHARED_LIBRARIES        += vendor.display.config@1.1
 endif
 
+ifeq ($(display_config_version), DISPLAY_CONFIG_1_7)
+LOCAL_SHARED_LIBRARIES        += vendor.display.config@1.7 \
+                                 vendor.display.config@1.6 vendor.display.config@1.5 \
+                                 vendor.display.config@1.4 vendor.display.config@1.3 \
+                                 vendor.display.config@1.2 vendor.display.config@1.1
+endif
+ifeq ($(display_config_version), DISPLAY_CONFIG_1_8)
+LOCAL_SHARED_LIBRARIES        += vendor.display.config@1.1 vendor.display.config@1.2 \
+                                 vendor.display.config@1.3 vendor.display.config@1.4 \
+                                 vendor.display.config@1.5 vendor.display.config@1.6 \
+                                 vendor.display.config@1.7 vendor.display.config@1.8
+endif
+ifeq ($(display_config_version), DISPLAY_CONFIG_1_9)
+LOCAL_SHARED_LIBRARIES        += vendor.display.config@1.1 vendor.display.config@1.2 \
+                                 vendor.display.config@1.3 vendor.display.config@1.4 \
+                                 vendor.display.config@1.5 vendor.display.config@1.6 \
+                                 vendor.display.config@1.7 vendor.display.config@1.8 \
+                                 vendor.display.config@1.9
+endif
+
 LOCAL_SRC_FILES               := hwc_session.cpp \
                                  hwc_session_services.cpp \
                                  hwc_display.cpp \
                                  hwc_display_primary.cpp \
                                  hwc_display_external.cpp \
                                  hwc_display_virtual.cpp \
+                                 hwc_display_dummy.cpp \
                                  ../hwc/hwc_debugger.cpp \
                                  ../hwc/hwc_buffer_sync_handler.cpp \
                                  hwc_color_manager.cpp \
